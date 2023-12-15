@@ -140,13 +140,6 @@ def main(protein_fasta, inputs, sizes):
 			for combo in product(*[ input_seqs[y] for y in x ]):
 				if sum([ c in mandatories for c in combo ]) == len(mandatories):
 					print(write_AF_fasta(combo))
-			
-
-#			output_seqs.extend([ z for z in product(*[ input_seqs[y] for y in x ])])	
-#		print(write_AF_fasta(c))
-
-
-
 	
 if __name__ == "__main__":
 	
