@@ -10,6 +10,8 @@ Matt Rich, 12/2023
 import re
 from itertools import groupby, combinations, product
 
+mandatory_string = "%"
+
 def fasta_iter(fasta_name):
 	"""
 	modified from Brent Pedersen
@@ -38,10 +40,22 @@ def write_AF_fasta(seq_tuples):
 	#zip the seq tuples into header and seq tuples
 	zst = list(zip(*seq_tuples))
 	for x in zst[0]:
-		header.append(x.split()[0])
+		header.append(x.split()[0].strip(","))
 	header_str=">{}\n".format(":".join(header))
 	seq_str = ":".join(zst[1])
 	return header_str+seq_str
+
+def parse_complex_sizes(s):
+	#s is comma-delimited, either an int or a range
+	items = s.split(",")
+	ranges = []
+	for item in items:
+		if "-" in item:
+			start, end = map(int, item.split("-"))
+			ranges.extend(range(start, end+1))
+		else:
+			ranges.append(int(item))
+	return iter([x-1 for x in ranges])
 
 def main(protein_fasta, inputs, sizes):
 	
@@ -50,11 +64,16 @@ def main(protein_fasta, inputs, sizes):
 	
 	#gather our sequences
 	input_seqs = []
+
+	#keep track of which are mandatory in the output
+	mandatories = []
 	
 	#first if there are fasta:
 	if inputs["FASTAS"] != None:
 		for f in inputs["FASTAS"]:
-			for s in fasta_iter(f):
+			for s in fasta_iter(f.rstrip(mandatory_string)):
+				if f.endswith(mandatory_string):
+					mandatories.append(s)
 				input_seqs.append([s])
 
 	#we need to make regexs specifically for each input (except fasta)
@@ -62,34 +81,30 @@ def main(protein_fasta, inputs, sizes):
 	#genes = "=[GENE] "
 	if inputs["GENES"] != None:
 		for x in inputs["GENES"]:
-			input_res.append([re.compile("={} ".format(x)), None])
+			input_res.append([re.compile("={} ".format(x)), None, False])
 	#isoforms = "^ISOFORM "
 	if inputs["ISOFORMS"] != None:
 		for x in inputs["ISOFORMS"]:
+			mand = False
+			if x.endswith(mandatory_string):
+				mand = True
+				x = x.rstrip(mandatory_string)
 			#check for ranges here
 			if "[" in x:
 				#split out range and put it the second element of these lists
-				xr = x.split("[")[1][:-1].split("-")
+				xr = x.split("[")[1].split("]")[0].split("-")
 				xres = x.split("[")[0]
-				input_res.append([re.compile("^{} ".format(xres)), [int(xr[0])-1, int(xr[1])]])
+				input_res.append([re.compile("^{} ".format(xres)), [int(xr[0])-1, int(xr[1])], mand])
 			else:	
-				input_res.append([re.compile("^{} ".format(x)), None])
+				input_res.append([re.compile("^{} ".format(x)), None, mand])
 	#keyword = "[KEYWORD]"
 	if inputs["KEYWORDS"] != None:
 		for x in inputs["KEYWORDS"]:
-			input_res.append([re.compile("{}".format(x)), None])
+			input_res.append([re.compile("{}".format(x)), None, False])
 	
-#	#adjust sizes for max number
-#	size_range = []
-#	if sizes[0] == None:
-#		size_range = sizes[2]
-#	elif sizes[1] != None:
-#		size_range = range(sizes[0], sizes[1]+1)
-#	elif sizes[1] == None:
-#		size_range = range(sizes[0], len(input_seqs))
-
 	#search through proteins fasta to find matches
-	
+	#for inputs 
+
 	for r in input_res:
 		tmp_input = []
 		for p in proteins:
@@ -98,17 +113,37 @@ def main(protein_fasta, inputs, sizes):
 					tmp_input.append((p, proteins[p]))
 				else:
 					tmp_input.append((p, proteins[p][r[1][0]:r[1][1]]))
+				#if this is a mandatory output
+				if r[2]:
+					mandatories.extend(tmp_input)
 		input_seqs.append(tmp_input)
 	
+#	print("INPUTSEQS: {}".format(input_seqs))
+#	print("MANDATORY: {}".format(mandatories))
 	#now we have all our input sequences, we want to make 
 	#all the relevant combinations of the proteins, choosing
 	#up to one from each RE "bucket"
 	#e.g., testing protein A + all isoforms of protein B individually
+	#I want to enumerate all possible combinations from each bucket
+	#then filter for what we really want.
 	
+	#if the user defines what complex sizes they want
+	#then make that iterator
+	complex_sizes = range(len(input_seqs))
+	if sizes != None:
+		complex_sizes = parse_complex_sizes(sizes)
+	
+	#then enumerate all possible with those sizes
+	output_seqs = []
+	for i in complex_sizes:
+		for x in combinations(range(len(input_seqs)), i+1):
+			for combo in product(*[ input_seqs[y] for y in x ]):
+				if sum([ c in mandatories for c in combo ]) == len(mandatories):
+					print(write_AF_fasta(combo))
+			
 
-	#product(*x) gives us the combinations
-	for c in product(*input_seqs):
-		print(write_AF_fasta(c))
+#			output_seqs.extend([ z for z in product(*[ input_seqs[y] for y in x ])])	
+#		print(write_AF_fasta(c))
 
 
 
@@ -119,28 +154,21 @@ if __name__ == "__main__":
 
 	parser = ArgumentParser()
 	parser.add_argument('-p', '--proteins', action = 'store', type = str, dest = 'PROTEINS', 
-		help = "fasta file containing all proteins to search")
+		help = "fasta file containing all proteins to search", required=True)
 	parser.add_argument('-g', '--gene', action = 'append', type = str, dest = 'GENES',
 		help = 'search for gene name. returns all isoforms (e.g., unc-44)')
 	parser.add_argument('-i', '--isoform', action = 'append', type = str, dest = 'ISOFORMS',
-		help = 'search for specific isoform (e.g., B0350.2f)')
+		help = 'search for specific isoform (e.g., B0350.2f). Can specify \
+				residues using [start-stop]. Append "{}" to make mandatory in complexes.'.format(mandatory_string))
 	parser.add_argument('-k', '--keyword', action = 'append', type = str, dest = 'KEYWORDS',
 		help = 'search for keyword in description')
 	parser.add_argument('-f', '--fasta', action = 'append', type = str, dest = 'FASTAS',
-		help = 'input protein sequences as additional FASTA. No searching necessary!')
-	parser.add_argument('--min', action = 'store', type = int, dest = "MIN_SIZE",
-		help = 'minimum oligomeric size for output', default=1)
-	parser.add_argument('--max', action = 'store', type = int, dest = "MAX_SIZE",
-		help = 'maximum oligomeric size for output')
-	parser.add_argument('-n', action = 'store', type = str, dest = "ARB_SIZE",
-		help = 'comma-delimited list of arbitrary oligomeric numbers')
+		help = 'input protein sequences as FASTA.')
+	parser.add_argument('-o', '--oligomer', action = 'store', type = str, dest = 'OLIGO',
+		help = 'size of complexes to output. Can be range (1-4) or comma-delimited (1,3,5). Default contains one of each input.',
+		default=None)
 
 	args = parser.parse_args()
 	
-	combo_ns = [args.MIN_SIZE, None, None]
-	if args.MAX_SIZE != None:
-		combo_ns = [args.MIN_SIZE, args.MAX_SIZE, None]
-	if args.ARB_SIZE != None:
-		combo_ns = [None, None, [int(x) for x in args.ARB_SIZE.split(",")]]
-
-	main(args.PROTEINS, {"GENES": args.GENES, "ISOFORMS": args.ISOFORMS, "KEYWORDS": args.KEYWORDS, "FASTAS": args.FASTAS}, combo_ns)
+	main(args.PROTEINS, {"GENES": args.GENES, "ISOFORMS": args.ISOFORMS,
+			"KEYWORDS": args.KEYWORDS, "FASTAS": args.FASTAS}, args.OLIGO)
