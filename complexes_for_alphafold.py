@@ -90,10 +90,10 @@ def main(protein_fasta, inputs, sizes):
 				mand = True
 				x = x.rstrip(mandatory_string)
 			#check for ranges here
-			if "[" in x:
+			if "(" in x:
 				#split out range and put it the second element of these lists
-				xr = x.split("[")[1].split("]")[0].split("-")
-				xres = x.split("[")[0]
+				xr = x.split("(")[1].split(")")[0].split("-")
+				xres = x.split("(")[0]
 				input_res.append([re.compile("^{} ".format(xres)), [int(xr[0])-1, int(xr[1])], mand])
 			else:	
 				input_res.append([re.compile("^{} ".format(x)), None, mand])
@@ -136,8 +136,11 @@ def main(protein_fasta, inputs, sizes):
 	#then enumerate all possible with those sizes
 	output_seqs = []
 	for i in complex_sizes:
+		#all combinations of positions in the input_seqs list
 		for x in combinations(range(len(input_seqs)), i+1):
+			#all products using those positions
 			for combo in product(*[ input_seqs[y] for y in x ]):
+				#if any mandatory outputs
 				if sum([ c in mandatories for c in combo ]) == len(mandatories):
 					print(write_AF_fasta(combo))
 	
@@ -152,7 +155,7 @@ if __name__ == "__main__":
 		help = 'search for gene name. returns all isoforms (e.g., unc-44)')
 	parser.add_argument('-i', '--isoform', action = 'append', type = str, dest = 'ISOFORMS',
 		help = 'search for specific isoform (e.g., B0350.2f). Can specify \
-				residues using [start-stop]. Append "{}" to make mandatory in complexes.'.format(mandatory_string))
+				residues using (start-stop). Append "{}" to make mandatory in complexes.'.format(mandatory_string))
 	parser.add_argument('-k', '--keyword', action = 'append', type = str, dest = 'KEYWORDS',
 		help = 'search for keyword in description')
 	parser.add_argument('-f', '--fasta', action = 'append', type = str, dest = 'FASTAS',
